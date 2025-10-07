@@ -14,7 +14,9 @@ The agent learns to navigate from a fixed start position to a **randomized goal*
 
 ## FILES DESCRIPTION AND RETROSPECTION(MUST READ)
 
-there are currently 3 files 
+there are currently 6 files 
+
+    the first 3 files (livrable_1/2/3_Baqua_Abdellah)  : implements the previous work that has been demanded .
 
     QLearningFixedGoal.py   : this file simulates the environment using Qlearning while the goal is fixed , the agent quickly learns to win the game ,we can assume that it    either memorizes the map(locations of goal and obstacles and how to move around them) , or it does learn how to navigate around. its early to tell.
 
