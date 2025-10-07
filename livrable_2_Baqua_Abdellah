@@ -1,0 +1,408 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+import random
+
+class DeterministicGridEnv:
+    """A 5x5 Grid World environment with deterministic transitions."""
+    def __init__(self, dimension=5, max_episode_steps=50):
+        self.grid_dimension = dimension
+        self.max_episode_steps = max_episode_steps
+        # State representation: (row, col)
+        self.state_space = [(r, c) for r in range(self.grid_dimension) for c in range(self.grid_dimension)]
+        self.num_actions = 4  # 0: Up, 1: Down, 2: Left, 3: Right
+        self.reset()
+
+    def reset(self):
+        """Resets the agent's position and step count."""
+        self.agent_position = [0, 0]
+        self.goal_position = [4, 4]
+        self.current_steps = 0
+        return self._get_current_state()
+
+    def _get_current_state(self):
+        """Returns the current state tuple."""
+        return tuple(self.agent_position)
+
+    def _calculate_next_position(self, row, col, action):
+        """Computes the position after taking an action, respecting boundaries."""
+        new_r, new_c = row, col
+        # Action map: 0=Up (row-1), 1=Down (row+1), 2=Left (col-1), 3=Right (col+1)
+        if action == 0 and row > 0:
+            new_r -= 1
+        elif action == 1 and row < self.grid_dimension - 1:
+            new_r += 1
+        elif action == 2 and col > 0:
+            new_c -= 1
+        elif action == 3 and col < self.grid_dimension - 1:
+            new_c += 1
+        return [new_r, new_c]
+
+    def get_transition_model(self, state, action):
+        """Returns the transition list (prob, next_state, reward) for a given state-action pair."""
+        r, c = state
+        next_pos_list = self._calculate_next_position(r, c, action)
+        next_state = tuple(next_pos_list)
+        # Reward: +1.0 for goal, -0.1 otherwise
+        reward = 1.0 if next_state == tuple(self.goal_position) else -0.1
+        # Deterministic environment: probability is 1.0
+        return [(1.0, next_state, reward)]
+
+    def step(self, action):
+        """Applies the action to the environment."""
+        r, c = self.agent_position
+        next_pos_list = self._calculate_next_position(r, c, action)
+        
+        self.agent_position = next_pos_list
+        self.current_steps += 1
+        
+        reward = 1.0 if self.agent_position == self.goal_position else -0.1
+        is_done = self.agent_position == self.goal_position or self.current_steps >= self.max_episode_steps
+        
+        return self._get_current_state(), reward, is_done
+
+def _state_to_index(env_instance, state_tuple):
+    """Utility to map (row, col) state tuple to flat array index."""
+    return state_tuple[0] * env_instance.grid_dimension + state_tuple[1]
+
+def determine_best_action(env, V_values, state, discount_factor):
+    """Calculates the best action for a state based on current V_values (Policy Improvement step)."""
+    state_idx = _state_to_index(env, state)
+    best_action = 0
+    best_q_value = -np.inf
+
+    for action in range(env.num_actions):
+        q_sa = 0
+        transitions = env.get_transition_model(state, action)
+        for prob, next_state, reward in transitions:
+            next_state_idx = _state_to_index(env, next_state)
+            q_sa += prob * (reward + discount_factor * V_values[next_state_idx])
+
+        if q_sa > best_q_value:
+            best_q_value = q_sa
+            best_action = action
+    return best_action
+
+# ----------------------------------------------------------------------
+# Dynamic Programming Algorithms
+# ----------------------------------------------------------------------
+
+def value_iteration_solver(env, discount_factor=0.9, convergence_threshold=1e-4):
+    """Implements the Value Iteration algorithm."""
+    V = np.zeros(env.grid_dimension * env.grid_dimension)
+
+    while True:
+        delta = 0
+        V_prev = np.copy(V)
+        
+        for i, state in enumerate(env.state_space):
+            q_values = np.zeros(env.num_actions)
+            
+            for action in range(env.num_actions):
+                expected_return = 0
+                transitions = env.get_transition_model(state, action)
+                for prob, next_state, reward in transitions:
+                    next_state_idx = _state_to_index(env, next_state)
+                    # Bellman Optimality Equation
+                    expected_return += prob * (reward + discount_factor * V_prev[next_state_idx])
+                q_values[action] = expected_return
+
+            V[i] = np.max(q_values)
+            delta = max(delta, np.abs(V[i] - V_prev[i]))
+
+        if delta < convergence_threshold:
+            break
+
+    # Extract optimal policy from the optimal value function
+    optimal_policy = np.zeros(env.grid_dimension * env.grid_dimension, dtype=int)
+    for i, state in enumerate(env.state_space):
+        optimal_policy[i] = determine_best_action(env, V, state, discount_factor)
+
+    return V, optimal_policy
+
+
+def policy_iteration_solver(env, discount_factor=0.9, convergence_threshold=1e-4):
+    """Implements the Policy Iteration algorithm."""
+    
+    # Initialize a random policy
+    policy = np.random.randint(0, env.num_actions, size=env.grid_dimension * env.grid_dimension)
+    V = np.zeros(env.grid_dimension * env.grid_dimension)
+
+    while True:
+        # Policy Evaluation
+        while True:
+            delta = 0
+            V_prev = np.copy(V)
+            for i, state in enumerate(env.state_space):
+                action = policy[i]
+                expected_return = 0
+                transitions = env.get_transition_model(state, action)
+                
+                for prob, next_state, reward in transitions:
+                    next_state_idx = _state_to_index(env, next_state)
+                    # Bellman Expectation Equation
+                    expected_return += prob * (reward + discount_factor * V_prev[next_state_idx])
+                
+                V[i] = expected_return
+                delta = max(delta, np.abs(V[i] - V_prev[i]))
+            
+            if delta < convergence_threshold:
+                break
+
+        # Policy Improvement
+        policy_stable = True
+        for i, state in enumerate(env.state_space):
+            old_action = policy[i]
+            # Use the determine_best_action helper
+            new_action = determine_best_action(env, V, state, discount_factor)
+            
+            if old_action != new_action:
+                policy_stable = False
+            
+            policy[i] = new_action
+
+        if policy_stable:
+            break
+
+    return V, policy
+
+# ----------------------------------------------------------------------
+# Reinforcement Learning Algorithms
+# ----------------------------------------------------------------------
+
+def epsilon_greedy_policy(Q_table, state, num_actions, epsilon, env):
+    """Chooses an action using the epsilon-greedy strategy."""
+    state_idx = _state_to_index(env, state)
+    if random.random() < epsilon:
+        # Exploration: choose a random action
+        return random.randint(0, num_actions - 1)
+    else:
+        # Exploitation: choose the best known action
+        return np.argmax(Q_table[state_idx, :])
+
+def monte_carlo_control(env, num_episodes=20000, discount_factor=0.9, epsilon_start=1.0, epsilon_end=0.05):
+    """Implements First-Visit Monte Carlo Control (on-policy, with epsilon-greedy)."""
+    Q = np.zeros((env.grid_dimension * env.grid_dimension, env.num_actions))
+    N = np.zeros((env.grid_dimension * env.grid_dimension, env.num_actions)) # Count of (s, a) visits
+    epsilon_decay_rate = (epsilon_start - epsilon_end) / num_episodes
+
+    episode_rewards_log = []
+    episode_steps_log = []
+
+    for episode in range(num_episodes):
+        epsilon = max(epsilon_end, epsilon_start - episode * epsilon_decay_rate)
+        trajectory = []
+        state = env.reset()
+        done = False
+        total_reward = 0
+
+        # Generate Trajectory
+        while not done:
+            action = epsilon_greedy_policy(Q, state, env.num_actions, epsilon, env)
+            next_state, reward, done = env.step(action)
+            trajectory.append((state, action, reward))
+            state = next_state
+            total_reward += reward
+
+        episode_rewards_log.append(total_reward)
+        episode_steps_log.append(env.current_steps)
+
+        # Evaluate and Improve (Backward Pass)
+        return_value = 0
+        visited_sa = set()
+
+        for step_data in reversed(trajectory):
+            s, a, r = step_data
+            s_idx = _state_to_index(env, s)
+            return_value = r + discount_factor * return_value
+            
+            # First-Visit MC: Only update Q for the first time (s, a) is seen in this episode
+            if (s_idx, a) not in visited_sa:
+                N[s_idx, a] += 1
+                # Incremental Mean Update
+                Q[s_idx, a] += (return_value - Q[s_idx, a]) / N[s_idx, a]
+                visited_sa.add((s_idx, a))
+
+    final_policy = np.argmax(Q, axis=1)
+    return Q, final_policy, episode_rewards_log, episode_steps_log
+
+
+def q_learning_control(env, num_episodes=20000, discount_factor=0.9, learning_rate=0.1, epsilon_start=1.0, epsilon_end=0.05):
+    """Implements the Off-Policy Temporal Difference Q-Learning algorithm."""
+    Q = np.zeros((env.grid_dimension * env.grid_dimension, env.num_actions))
+    epsilon_decay_rate = (epsilon_start - epsilon_end) / num_episodes
+    
+    episode_rewards_log = []
+    episode_steps_log = []
+
+    for episode in range(num_episodes):
+        epsilon = max(epsilon_end, epsilon_start - episode * epsilon_decay_rate)
+        state = env.reset()
+        done = False
+        total_reward = 0
+
+        while not done:
+            # Policy (Epsilon-Greedy, behavior policy)
+            action = epsilon_greedy_policy(Q, state, env.num_actions, epsilon, env)
+            
+            # Interact with Environment
+            next_state, reward, done = env.step(action)
+            total_reward += reward
+
+            s_idx = _state_to_index(env, state)
+            ns_idx = _state_to_index(env, next_state)
+            
+            # Target (Optimal action based on Q, target policy)
+            best_next_action_value = np.max(Q[ns_idx, :])
+            
+            # Q-Learning Update Rule
+            temporal_difference_target = reward + discount_factor * best_next_action_value
+            Q[s_idx, action] += learning_rate * (temporal_difference_target - Q[s_idx, action])
+            
+            state = next_state
+
+        episode_rewards_log.append(total_reward)
+        episode_steps_log.append(env.current_steps)
+
+    final_policy = np.argmax(Q, axis=1)
+    return Q, final_policy, episode_rewards_log, episode_steps_log
+
+# ----------------------------------------------------------------------
+# Visualization Utilities
+# ----------------------------------------------------------------------
+
+def visualize_policy(env, plot_axis, policy=None, info_suffix=""):
+    """Draws the grid state and (optionally) the policy arrows using a different color scheme."""
+    grid_data = np.zeros((env.grid_dimension, env.grid_dimension))
+    
+    # Mark goal (3) and agent (1) for distinct colors in 'viridis'
+    goal_r, goal_c = env.goal_position
+    agent_r, agent_c = env.agent_position
+    grid_data[goal_r, goal_c] = 3 # A higher value for goal to get a brighter color in viridis
+    grid_data[agent_r, agent_c] = 1 # Agent
+    # Empty cells remain 0
+    
+    plot_axis.clear()
+    # Use 'viridis' colormap
+    plot_axis.imshow(grid_data, cmap="viridis", origin="upper", vmin=0, vmax=3) 
+
+    if policy is not None:
+        # Plot policy arrows
+        for i, state in enumerate(env.state_space):
+            action = policy[i]
+            r, c = state
+            # Arrow direction: 0: Up(-r), 1: Down(+r), 2: Left(-c), 3: Right(+c)
+            dr, dc = 0, 0
+            if action == 0: dr, dc = -0.3, 0
+            elif action == 1: dr, dc = 0.3, 0
+            elif action == 2: dr, dc = 0, -0.3
+            elif action == 3: dr, dc = 0, 0.3
+            
+            # Note: matplotlib plots (x, y) where x=col, y=row. We use (c, r)
+            plot_axis.arrow(c, r, dc, dr, head_width=0.1, head_length=0.1, fc='red', ec='darkred', alpha=0.7)
+
+    plot_axis.set_xticks([])
+    plot_axis.set_yticks([])
+    plot_axis.set_title(f"Step: {env.current_steps} | Position: {env.agent_position} | {info_suffix}")
+    plt.draw()
+    plt.pause(0.01)
+
+def test_and_visualize_policy(env, policy, algorithm_title, num_tests=5):
+    """Simulates multiple episodes using the given policy and animates the last one."""
+    
+    # Setup plotting for animation
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    print(f"\n--- Testing Policy: {algorithm_title} ---")
+    success_count = 0
+    
+    for test_run in range(num_tests):
+        env.reset()
+        done = False
+        
+        while not done:
+            state = env._get_current_state()
+            s_idx = _state_to_index(env, state)
+            action = policy[s_idx]
+            
+            # Step and check termination conditions
+            _, _, done_step = env.step(action)
+            
+            # Only animate the last test run
+            if test_run == num_tests - 1:
+                visualize_policy(env, ax, policy, f"{algorithm_title} (Test {test_run+1})")
+            
+            if env.agent_position == env.goal_position:
+                done = True
+                success_count += 1
+            elif env.current_steps >= env.max_episode_steps:
+                done = True
+    
+    print(f"Success Rate: {success_count}/{num_tests}")
+    plt.ioff()
+    # Close the figure handle to prevent excessive windows if running outside of interactive IDE
+    if fig:
+        plt.close(fig)
+
+
+def plot_learning_performance(mc_r_log, mc_s_log, ql_r_log, ql_s_log, window_size=500):
+    """Plots the smoothed rewards and steps per episode for MC and Q-Learning."""
+    
+    def apply_smoothing(data):
+        if len(data) < window_size:
+            return data
+        # Moving average convolution
+        return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
+
+    fig, ax = plt.subplots(1, 2, figsize=(12, 4))
+    
+    ax[0].plot(apply_smoothing(mc_r_log), label="Monte Carlo (MC)")
+    ax[0].plot(apply_smoothing(ql_r_log), label="Q-Learning (QL)")
+    ax[0].set_title(f"Smoothed Cumulative Rewards (Window: {window_size})")
+    ax[0].set_xlabel("Episode")
+    ax[0].set_ylabel("Reward")
+    ax[0].legend()
+    
+    ax[1].plot(apply_smoothing(mc_s_log), label="Monte Carlo (MC)")
+    ax[1].plot(apply_smoothing(ql_s_log), label="Q-Learning (QL)")
+    ax[1].set_title(f"Smoothed Steps Per Episode (Window: {window_size})")
+    ax[1].set_xlabel("Episode")
+    ax[1].set_ylabel("Steps")
+    ax[1].legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+# ----------------------------------------------------------------------
+# Execution Block
+# ----------------------------------------------------------------------
+
+# Hyperparameters
+DISCOUNT_FACTOR = 0.95
+TOTAL_EPISODES = 20000
+LEARNING_RATE = 0.1
+
+environment = DeterministicGridEnv()
+
+print("\n--- Running Dynamic Programming Solvers ---")
+# [1] Value Iteration
+V_vi, policy_vi = value_iteration_solver(environment, DISCOUNT_FACTOR)
+test_and_visualize_policy(environment, policy_vi, "Value Iteration")
+
+print("\n[2] Policy Iteration")
+V_pi, policy_pi = policy_iteration_solver(environment, DISCOUNT_FACTOR)
+test_and_visualize_policy(environment, policy_pi, "Policy Iteration")
+
+print("\n--- Running Temporal Difference and Monte Carlo Solvers ---")
+# [3] Monte Carlo Control
+Q_mc, policy_mc, mc_rewards, mc_steps = monte_carlo_control(environment, TOTAL_EPISODES, DISCOUNT_FACTOR)
+test_and_visualize_policy(environment, policy_mc, "Monte Carlo Control")
+
+# [4] Q-Learning Control
+Q_ql, policy_ql, ql_rewards, ql_steps = q_learning_control(environment, TOTAL_EPISODES, DISCOUNT_FACTOR, LEARNING_RATE)
+test_and_visualize_policy(environment, policy_ql, "Q-Learning Control")
+
+# Plot results
+plot_learning_performance(mc_rewards, mc_steps, ql_rewards, ql_steps)
+print("\nAll simulations and visualizations have concluded.")

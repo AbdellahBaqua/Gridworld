@@ -1,0 +1,136 @@
+import numpy as np
+import matplotlib.pyplot as plt
+# The 'time' import was removed as it wasn't used
+
+class FiveByFiveGridEnvironment:
+    """A standard 5x5 grid world environment for reinforcement learning."""
+    def __init__(self):
+        self.grid_size = 5
+        self.max_steps = 30  # Max steps per episode
+        self._reset_environment()
+
+    def _reset_environment(self):
+        # Initial positions
+        self.agent_position = [0, 0]
+        self.goal_position = [4, 4]
+        self.current_step_count = 0
+        return self.get_current_state()
+
+    # Public interface methods
+    def reset(self):
+        return self._reset_environment()
+
+    def get_current_state(self):
+        # State is simply the agent's (x, y) coordinates
+        return tuple(self.agent_position)
+
+    def step(self, action):
+        
+        # Action mapping: 0=Up, 1=Down, 2=Left, 3=Right
+        current_x, current_y = self.agent_position
+        new_x, new_y = current_x, current_y
+
+        # Determine new position based on action, respecting boundaries
+        if action == 0 and current_x > 0:
+            new_x -= 1 # Move Up
+        elif action == 1 and current_x < self.grid_size - 1:
+            new_x += 1 # Move Down
+        elif action == 2 and current_y > 0:
+            new_y -= 1 # Move Left
+        elif action == 3 and current_y < self.grid_size - 1:
+            new_y += 1 # Move Right
+         
+        self.agent_position = [new_x, new_y]
+        self.current_step_count += 1
+         
+        # Calculate reward and episode status (done)
+        if self.agent_position == self.goal_position:
+            reward_value = 1.0
+            is_terminal = True
+        else:
+            reward_value = -0.1  # Small penalty for each step
+            is_terminal = self.current_step_count >= self.max_steps
+             
+        return self.get_current_state(), reward_value, is_terminal
+
+# --- Visualization Function ---
+
+def render_environment(environment, current_total_reward):
+    """Draws the current state of the grid world."""
+    
+    grid_data = np.zeros((environment.grid_size, environment.grid_size))
+    
+    goal_x, goal_y = environment.goal_position
+    agent_x, agent_y = environment.agent_position
+     
+    # Mark goal (2) and agent (1)
+    grid_data[goal_x, goal_y] = 2
+    grid_data[agent_x, agent_y] = 1
+     
+    plot_axis.clear()
+     
+    # Display the grid
+    plot_axis.imshow(grid_data, cmap="coolwarm", origin="upper", vmin=0, vmax=2)
+     
+    # Setup grid lines for clarity
+    plot_axis.set_xticks(np.arange(-0.5, environment.grid_size, 1), minor=True)
+    plot_axis.set_yticks(np.arange(-0.5, environment.grid_size, 1), minor=True)
+    plot_axis.grid(which="minor", color="black", linewidth=1.0)
+     
+    plot_axis.set_xticks([])
+    plot_axis.set_yticks([])
+     
+    # Update title
+    plot_axis.set_title(
+        f"Step: {environment.current_step_count} | Position: {environment.agent_position} | Total Reward: {current_total_reward:.1f}"
+    )
+     
+    # Redraw the canvas
+    plot_figure.canvas.draw()
+    plot_figure.canvas.flush_events()
+
+
+# --- Main Execution ---
+
+# Setup environment and plotting
+environment = FiveByFiveGridEnvironment()
+current_state = environment.reset()
+total_reward = 0.0
+
+plt.ion() # Turn on interactive mode for live plotting
+plot_figure, plot_axis = plt.subplots(figsize=(5, 5))
+
+render_environment(environment, total_reward)
+plt.pause(1.0)
+
+print("Starting Random Walk Simulation...")
+episode_done = False
+
+# Random agent loop
+while not episode_done:
+    # Select a random action from {0, 1, 2, 3}
+    action_choice = np.random.randint(0, 4)
+     
+    current_state, reward_obtained, episode_done = environment.step(action_choice)
+    total_reward += reward_obtained
+     
+    render_environment(environment, total_reward)
+     
+    plt.pause(0.3)
+
+# Final output
+if environment.agent_position == environment.goal_position:
+    print(f"\n--- SUCCESS: Goal Reached! ---")
+    final_status = "GOAL ACHIEVED"
+else:
+    print(f"\n--- TERMINATED: Max Steps Reached! ---")
+    final_status = "MAX STEPS"
+
+print(
+    f"Total Steps: {environment.current_step_count}, Final Position: {environment.agent_position}, Total Reward: {total_reward:.1f}"
+)
+
+# Update final title
+plot_axis.set_title(f"Episode Concluded ({final_status}) | Steps: {environment.current_step_count}")
+plt.ioff()
+plt.show()

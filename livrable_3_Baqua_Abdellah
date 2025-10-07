@@ -1,0 +1,208 @@
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+from collections import deque
+
+class SimpleGridEnvironment:
+    """A 5x5 Grid World for comparison of Q-Learning methods."""
+    def __init__(self):
+        self.grid_dimension = 5
+        self.max_episode_length = 50
+        # State space: list of (row, col) tuples
+        self.state_space = [(r, c) for r in range(self.grid_dimension) for c in range(self.grid_dimension)]
+        self.num_actions = 4 # 0: Up, 1: Down, 2: Left, 3: Right
+        self.goal_position = (4, 4)
+        self.reset()
+
+    def reset(self):
+        """Resets agent position to (0, 0) and step count."""
+        self.agent_position = [0, 0]
+        self.current_steps = 0
+        return tuple(self.agent_position)
+
+    def _get_next_pos(self, x, y, action):
+        """Calculates the next position, enforcing boundaries."""
+        new_x, new_y = x, y
+        
+        # Action map: 0=Up, 1=Down, 2=Left, 3=Right
+        if action == 0 and x > 0: new_x -= 1
+        elif action == 1 and x < self.grid_dimension - 1: new_x += 1
+        elif action == 2 and y > 0: new_y -= 1
+        elif action == 3 and y < self.grid_dimension - 1: new_y += 1
+        
+        return [new_x, new_y]
+
+    def step(self, action):
+        """Performs one step in the environment."""
+        x, y = self.agent_position
+        next_pos = self._get_next_pos(x, y, action)
+        
+        self.agent_position = next_pos
+        self.current_steps += 1
+        
+        is_done = tuple(self.agent_position) == self.goal_position or self.current_steps >= self.max_episode_length
+        
+        # Standard reward structure: -1.0 per step, 0.0 upon reaching goal
+        reward_value = -1.0
+        if tuple(self.agent_position) == self.goal_position:
+            reward_value = 0.0
+            
+        return tuple(self.agent_position), reward_value, is_done
+
+def potential_function(state, goal_state):
+    """Potential function based on negative Manhattan distance to the goal."""
+    return - (abs(state[0] - goal_state[0]) + abs(state[1] - goal_state[1]))
+
+def select_epsilon_greedy_action(Q_table, state_index, epsilon_value, n_actions):
+    """Epsilon-greedy action selection."""
+    if random.random() < epsilon_value:
+        return random.randint(0, n_actions - 1)
+    # Exploit: choose best action
+    return np.argmax(Q_table[state_index])
+
+# ----------------------------------------------------------------------
+# Q-Learning Algorithms
+# ----------------------------------------------------------------------
+
+def q_learning_standard(env, episodes=5000, gamma=0.9, alpha=0.1, epsilon_start=1.0, epsilon_end=0.05):
+    """Standard Q-Learning algorithm."""
+    n_states = len(env.state_space)
+    n_actions = env.num_actions
+    Q = np.zeros((n_states, n_actions))
+    epsilon_decay_rate = (epsilon_start - epsilon_end) / episodes
+    
+    recent_successes = deque(maxlen=50)
+    success_rate_log = []
+    episodes_to_95_std = None
+
+    for ep in range(episodes):
+        epsilon = max(epsilon_end, epsilon_start - ep * epsilon_decay_rate)
+        current_state = env.reset()
+        done = False
+        
+        while not done:
+            s_index = current_state[0] * env.grid_dimension + current_state[1]
+            action = select_epsilon_greedy_action(Q, s_index, epsilon, n_actions)
+            next_state, reward, done = env.step(action)
+            ns_index = next_state[0] * env.grid_dimension + next_state[1]
+            
+            # Standard Q-Learning update
+            target = reward + gamma * np.max(Q[ns_index])
+            Q[s_index, action] += alpha * (target - Q[s_index, action])
+            current_state = next_state
+            
+        success = 1 if current_state == env.goal_position else 0
+        recent_successes.append(success)
+        success_rate = np.mean(recent_successes)
+        success_rate_log.append(success_rate)
+        
+        if episodes_to_95_std is None and len(recent_successes) == 50 and success_rate >= 0.95:
+            episodes_to_95_std = ep + 1
+            
+    greedy_policy = np.argmax(Q, axis=1)
+    return Q, greedy_policy, success_rate_log, episodes_to_95_std
+
+def q_learning_with_shaping(env, episodes=5000, gamma=0.9, alpha=0.1, epsilon_start=1.0, epsilon_end=0.05):
+    """Q-Learning with potential-based reward shaping."""
+    n_states = len(env.state_space)
+    n_actions = env.num_actions
+    Q = np.zeros((n_states, n_actions))
+    epsilon_decay_rate = (epsilon_start - epsilon_end) / episodes
+    
+    recent_successes = deque(maxlen=50)
+    success_rate_log = []
+    episodes_to_95_shp = None
+
+    for ep in range(episodes):
+        epsilon = max(epsilon_end, epsilon_start - ep * epsilon_decay_rate)
+        current_state = env.reset()
+        done = False
+        
+        while not done:
+            s_index = current_state[0] * env.grid_dimension + current_state[1]
+            action = select_epsilon_greedy_action(Q, s_index, epsilon, n_actions)
+            next_state, original_reward, done = env.step(action)
+            
+            # Reward Shaping: R' = R + gamma * Phi(s') - Phi(s)
+            shaping_term = gamma * potential_function(next_state, env.goal_position) - potential_function(current_state, env.goal_position)
+            shaped_reward = original_reward + shaping_term
+            
+            ns_index = next_state[0] * env.grid_dimension + next_state[1]
+            
+            # Q-Learning update using the shaped reward
+            target = shaped_reward + gamma * np.max(Q[ns_index])
+            Q[s_index, action] += alpha * (target - Q[s_index, action])
+            current_state = next_state
+            
+        success = 1 if current_state == env.goal_position else 0
+        recent_successes.append(success)
+        success_rate = np.mean(recent_successes)
+        success_rate_log.append(success_rate)
+        
+        if episodes_to_95_shp is None and len(recent_successes) == 50 and success_rate >= 0.95:
+            episodes_to_95_shp = ep + 1
+            
+    greedy_policy = np.argmax(Q, axis=1)
+    return Q, greedy_policy, success_rate_log, episodes_to_95_shp
+
+# ----------------------------------------------------------------------
+# Visualization
+# ----------------------------------------------------------------------
+
+def display_policy_text(env, policy, title_string):
+    """Prints the policy as a grid of arrows."""
+    # Arrow mapping: 0: Up, 1: Down, 2: Left, 3: Right
+    arrows = {0: '↑', 1: '↓', 2: '←', 3: '→'}
+    grid = np.full((env.grid_dimension, env.grid_dimension), ' ', dtype='<U1')
+    
+    for i, (r, c) in enumerate(env.state_space):
+        if (r, c) == env.goal_position:
+            grid[r, c] = 'G'
+        else:
+            grid[r, c] = arrows[policy[i]]
+            
+    print(f"\nPolicy ({title_string}):")
+    print(grid)
+
+def plot_success_rate(success_rate_standard, success_rate_shaped):
+    """Plots the learning curves for both methods."""
+    plt.figure(figsize=(9, 5))
+    
+    # Changed line colors for a different aesthetic
+    plt.plot(success_rate_standard, label="Standard Q-Learning", color='royalblue', linewidth=1.5)
+    plt.plot(success_rate_shaped, label="Shaped Q-Learning", color='darkorange', linewidth=1.5)
+    
+    plt.title("Success Rate Over Episodes (50-Episode Rolling Mean)")
+    plt.xlabel("Episode Number")
+    plt.ylabel("Success Rate")
+    plt.legend()
+    plt.grid(alpha=0.4)
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    env = SimpleGridEnvironment()
+    discount_factor = 0.9
+
+    # Run simulations
+    Q_std, policy_std, success_std, episodes_to_95_std = q_learning_standard(env, gamma=discount_factor)
+    Q_shp, policy_shp, success_shp, episodes_to_95_shp = q_learning_with_shaping(env, gamma=discount_factor)
+
+    # Print results
+    print(
+        f"\nStandard Q-Learning: Success rate ≥ 95% reached after "
+        f"{episodes_to_95_std} episodes" if episodes_to_95_std else 
+        "\nStandard Q-Learning: Success rate ≥ 95% not reached"
+    )
+    print(
+        f"Shaped Q-Learning: Success rate ≥ 95% reached after "
+        f"{episodes_to_95_shp} episodes" if episodes_to_95_shp else 
+        "Shaped Q-Learning: Success rate ≥ 95% not reached"
+    )
+
+    # Display policies
+    display_policy_text(env, policy_std, "Standard")
+    display_policy_text(env, policy_shp, "Shaped")
+
+    # Plot learning curves
+    plot_success_rate(success_std, success_shp)
