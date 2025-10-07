@@ -25,9 +25,9 @@ there are currently 3 files
 To modify the gridworld simulation settings 
 Search for the code block :
 
-grid_configs = {
-        a: {'episodes': b, 'viz_interval': c, 'obstacles': d},
-        10: {'episodes': 1000, 'viz_interval': 200, 'obstacles': 5},
+    grid_configs = {
+            a: {'episodes': b, 'viz_interval': c, 'obstacles': d},
+            10: {'episodes': 1000, 'viz_interval': 200, 'obstacles': 5},
     }
 
 where a² is the surface of the grid , b the number of episodes , c the limit of steps , and d is the number of obstacles .
